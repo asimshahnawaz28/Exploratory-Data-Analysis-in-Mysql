@@ -1,4 +1,3 @@
-# Exploratory-Data-Analysis-in-Mysql
 # Exploratory Data Analysis in MySQL
 
 ## 📌 Project Overview
