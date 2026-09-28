@@ -1,0 +1,311 @@
+Q1. Find the top 10 customers by total order value
+
+Difficulty: Moderate
+
+Calculate the total value of each customer's orders after applying the item-level discount.
+
+SELECT 
+    c.customer_id,
+    CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+    COUNT(DISTINCT o.order_id) AS total_orders,
+    ROUND(
+        SUM(od.quantity * od.unit_price * (1 - od.discount_pct / 100)),
+        2
+    ) AS total_order_value
+FROM customers c
+JOIN orders o 
+    ON c.customer_id = o.customer_id
+JOIN order_details od 
+    ON o.order_id = od.order_id
+GROUP BY 
+    c.customer_id,
+    c.first_name,
+    c.last_name
+ORDER BY total_order_value DESC
+LIMIT 10;
+
+Concepts: JOIN, SUM(), COUNT(DISTINCT), GROUP BY, ORDER BY, LIMIT
+
+Q2. Find the top 3 products by revenue within each category
+
+Difficulty: Moderate–Tough
+
+WITH product_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        p.category_id,
+        c.category_name,
+        ROUND(
+            SUM(
+                od.quantity * od.unit_price *
+                (1 - od.discount_pct / 100)
+            ),
+            2
+        ) AS revenue
+    FROM products p
+    JOIN categories c
+        ON p.category_id = c.category_id
+    JOIN order_details od
+        ON p.product_id = od.product_id
+    GROUP BY
+        p.product_id,
+        p.product_name,
+        p.category_id,
+        c.category_name
+),
+
+ranked_products AS (
+    SELECT *,
+        RANK() OVER (
+            PARTITION BY category_id
+            ORDER BY revenue DESC
+        ) AS category_rank
+    FROM product_revenue
+)
+
+SELECT
+    category_name,
+    product_id,
+    product_name,
+    revenue,
+    category_rank
+FROM ranked_products
+WHERE category_rank <= 3
+ORDER BY category_name, category_rank;
+
+Concepts: CTE, RANK(), PARTITION BY, aggregation
+
+Q3. Find customers who have placed more orders than the average customer
+
+Difficulty: Tough
+
+WITH customer_orders AS (
+    SELECT
+        customer_id,
+        COUNT(*) AS order_count
+    FROM orders
+    GROUP BY customer_id
+),
+
+average_orders AS (
+    SELECT AVG(order_count) AS avg_order_count
+    FROM customer_orders
+)
+
+SELECT
+    c.customer_id,
+    CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+    co.order_count,
+    ROUND(ao.avg_order_count, 2) AS average_customer_orders
+FROM customer_orders co
+JOIN customers c
+    ON co.customer_id = c.customer_id
+CROSS JOIN average_orders ao
+WHERE co.order_count > ao.avg_order_count
+ORDER BY co.order_count DESC;
+
+Concepts: CTE, aggregate subquery, CROSS JOIN
+
+Q4. Calculate monthly revenue and month-over-month revenue growth
+
+Difficulty: Tough
+
+WITH monthly_revenue AS (
+    SELECT
+        DATE_FORMAT(o.order_date, '%Y-%m') AS order_month,
+        SUM(
+            od.quantity * od.unit_price *
+            (1 - od.discount_pct / 100)
+        ) AS revenue
+    FROM orders o
+    JOIN order_details od
+        ON o.order_id = od.order_id
+    WHERE o.order_status NOT IN ('Cancelled', 'Returned')
+    GROUP BY DATE_FORMAT(o.order_date, '%Y-%m')
+),
+
+revenue_with_previous AS (
+    SELECT
+        order_month,
+        revenue,
+        LAG(revenue) OVER (
+            ORDER BY order_month
+        ) AS previous_month_revenue
+    FROM monthly_revenue
+)
+
+SELECT
+    order_month,
+    ROUND(revenue, 2) AS revenue,
+    ROUND(previous_month_revenue, 2) AS previous_month_revenue,
+    ROUND(
+        (revenue - previous_month_revenue)
+        / NULLIF(previous_month_revenue, 0) * 100,
+        2
+    ) AS mom_growth_percentage
+FROM revenue_with_previous
+ORDER BY order_month;
+
+Concepts: CTE, LAG(), date functions, percentage calculation
+
+Q5. Find the highest-revenue product for every year
+
+Difficulty: Tough
+
+WITH yearly_product_revenue AS (
+    SELECT
+        YEAR(o.order_date) AS order_year,
+        p.product_id,
+        p.product_name,
+        SUM(
+            od.quantity * od.unit_price *
+            (1 - od.discount_pct / 100)
+        ) AS revenue
+    FROM orders o
+    JOIN order_details od
+        ON o.order_id = od.order_id
+    JOIN products p
+        ON od.product_id = p.product_id
+    WHERE o.order_status NOT IN ('Cancelled', 'Returned')
+    GROUP BY
+        YEAR(o.order_date),
+        p.product_id,
+        p.product_name
+),
+
+ranked_products AS (
+    SELECT *,
+        RANK() OVER (
+            PARTITION BY order_year
+            ORDER BY revenue DESC
+        ) AS revenue_rank
+    FROM yearly_product_revenue
+)
+
+SELECT
+    order_year,
+    product_id,
+    product_name,
+    ROUND(revenue, 2) AS revenue
+FROM ranked_products
+WHERE revenue_rank = 1
+ORDER BY order_year;
+Q6. Identify products whose revenue is above the average product revenue
+
+Difficulty: Tough
+
+WITH product_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        SUM(
+            od.quantity * od.unit_price *
+            (1 - od.discount_pct / 100)
+        ) AS revenue
+    FROM products p
+    JOIN order_details od
+        ON p.product_id = od.product_id
+    JOIN orders o
+        ON od.order_id = o.order_id
+    WHERE o.order_status NOT IN ('Cancelled', 'Returned')
+    GROUP BY
+        p.product_id,
+        p.product_name
+),
+
+average_revenue AS (
+    SELECT AVG(revenue) AS avg_revenue
+    FROM product_revenue
+)
+
+SELECT
+    pr.product_id,
+    pr.product_name,
+    ROUND(pr.revenue, 2) AS revenue,
+    ROUND(ar.avg_revenue, 2) AS average_product_revenue
+FROM product_revenue pr
+CROSS JOIN average_revenue ar
+WHERE pr.revenue > ar.avg_revenue
+ORDER BY pr.revenue DESC;
+Q7. Find the most profitable products based on unit margin
+
+Difficulty: Moderate
+
+Calculate:
+
+Unit Margin = Price - Cost
+Margin % = (Price - Cost) / Price × 100
+SELECT
+    p.product_id,
+    p.product_name,
+    p.price,
+    p.cost,
+    ROUND(p.price - p.cost, 2) AS unit_margin,
+    ROUND(
+        (p.price - p.cost) / NULLIF(p.price, 0) * 100,
+        2
+    ) AS margin_percentage
+FROM products p
+WHERE p.price > p.cost
+ORDER BY margin_percentage DESC
+LIMIT 20;
+Q8. Find the top 5 suppliers based on potential inventory value
+
+Difficulty: Moderate
+
+Potential inventory value:
+
+stock_quantity × (price - cost)
+SELECT
+    s.supplier_id,
+    s.supplier_name,
+    COUNT(p.product_id) AS number_of_products,
+    SUM(p.stock_quantity) AS total_units,
+    ROUND(
+        SUM(p.stock_quantity * (p.price - p.cost)),
+        2
+    ) AS potential_inventory_profit
+FROM suppliers s
+JOIN products p
+    ON s.supplier_id = p.supplier_id
+GROUP BY
+    s.supplier_id,
+    s.supplier_name
+ORDER BY potential_inventory_profit DESC
+LIMIT 5;
+Q9. Find customers who have never placed an order
+
+Difficulty: Moderate
+
+SELECT
+    c.customer_id,
+    CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+    c.city,
+    c.state,
+    c.customer_segment
+FROM customers c
+LEFT JOIN orders o
+    ON c.customer_id = o.customer_id
+WHERE o.order_id IS NULL
+ORDER BY c.customer_id;
+
+This is an important real-world analytics question because it identifies registered but inactive customers.
+
+Q10. Calculate the average rating and number of reviews for each product
+
+Difficulty: Moderate
+
+SELECT
+    p.product_id,
+    p.product_name,
+    COUNT(r.review_id) AS review_count,
+    ROUND(AVG(r.rating), 2) AS average_rating
+FROM products p
+LEFT JOIN reviews r
+    ON p.product_id = r.product_id
+GROUP BY
+    p.product_id,
+    p.product_name
+HAVING COUNT(r.review_id) > 0
+ORDER BY average_rating DESC, review_count DESC;
